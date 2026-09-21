@@ -1,0 +1,37 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>översätt</title>
+  <link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 16 16'><circle cx='8' cy='8' r='6' fill='%23d9b36c'/></svg>">
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Newsreader:opsz,wght@6..72,400;6..72,500&family=Inter:wght@400;500&display=swap" rel="stylesheet">
+  <link rel="stylesheet" href="style.css">
+</head>
+<body>
+  <nav>
+    <button id="dir" title="Translation direction"></button>
+    <button id="length" title="Text length"></button>
+    <a href="#/">play</a>
+    <a href="#/history">history</a>
+    <a href="#/mistakes">mistakes</a>
+  </nav>
+
+  <main id="play">
+    <p id="source" class="source" lang="sv"></p>
+    <div class="box">
+      <textarea id="answer" rows="3" spellcheck="false" autocomplete="off" placeholder=""></textarea>
+      <a id="srclink" class="srclink" target="_blank" rel="noopener"></a>
+    </div>
+    <div id="result"></div>
+    <p id="hint" class="hint"></p>
+  </main>
+
+  <main id="history" hidden></main>
+  <main id="mistakes" hidden></main>
+
+  <script src="app.js" type="module"></script>
+</body>
+</html>

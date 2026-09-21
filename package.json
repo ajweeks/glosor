@@ -1,0 +1,13 @@
+{
+  "name": "oversatt",
+  "version": "1.0.0",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "start": "node server.js",
+    "build-corpus": "node scripts/build-corpus.mjs"
+  },
+  "dependencies": {
+    "@anthropic-ai/sdk": "^0.127.0"
+  }
+}
