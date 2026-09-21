@@ -4,6 +4,7 @@ import { readFileSync, existsSync } from "node:fs";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 import Anthropic from "@anthropic-ai/sdk";
+import * as access from "./access.js";
 
 const here = path.dirname(fileURLToPath(import.meta.url));
 const PUBLIC = path.join(here, "public");
@@ -114,7 +115,7 @@ async function fetchTatoeba(from, length) {
   url.searchParams.set("showtrans", "matching");
   url.searchParams.set("limit", "50");
 
-  const res = await fetch(url, { headers: { "User-Agent": "oversatt-game/1.0" } });
+  const res = await fetch(url, { headers: { "User-Agent": "glosor/1.0" } });
   if (!res.ok) throw new Error(`Tatoeba responded ${res.status}`);
   const { data } = await res.json();
 
@@ -453,9 +454,34 @@ function unescapeStrings(value) {
 
 const MIME = { ".html": "text/html", ".js": "text/javascript", ".css": "text/css", ".svg": "image/svg+xml" };
 
-function send(res, status, body, type = "application/json") {
-  res.writeHead(status, { "Content-Type": `${type}; charset=utf-8` });
+// Scripts only from this origin and Turnstile, no framing; inline styles stay allowed for a few style="" attributes.
+const SECURITY_HEADERS = {
+  "Content-Security-Policy": [
+    "default-src 'self'",
+    "script-src 'self' https://challenges.cloudflare.com",
+    "frame-src https://challenges.cloudflare.com",
+    "style-src 'self' 'unsafe-inline' https://fonts.googleapis.com",
+    "font-src https://fonts.gstatic.com",
+    "img-src 'self' data:",
+    "connect-src 'self'",
+    "base-uri 'none'",
+    "form-action 'none'",
+    "frame-ancestors 'none'",
+  ].join("; "),
+  "X-Content-Type-Options": "nosniff",
+  "Referrer-Policy": "strict-origin-when-cross-origin",
+};
+
+function send(res, status, body, type = "application/json", headers = {}) {
+  res.writeHead(status, { ...SECURITY_HEADERS, "Content-Type": `${type}; charset=utf-8`, ...headers });
   res.end(type === "application/json" ? JSON.stringify(body) : body);
+}
+
+// Sends the access check's error and returns true, or returns false when the request may go ahead.
+function denied(res, req, opts) {
+  const err = access.check(req, opts);
+  if (err) send(res, err.status, err.body);
+  return !!err;
 }
 
 async function readJson(req) {
@@ -470,7 +496,22 @@ async function readJson(req) {
 const server = http.createServer(async (req, res) => {
   const url = new URL(req.url, "http://localhost");
   try {
+    if (req.method === "GET" && url.pathname === "/api/access") {
+      return send(res, 200, {
+        gated: access.GATED,
+        captcha: access.CAPTCHA_SITE_KEY,
+        password: !!process.env.ACCESS_PASSWORD,
+        authed: !access.GATED || !!access.sessionOf(req),
+      });
+    }
+
+    if (req.method === "POST" && url.pathname === "/api/session") {
+      const out = await access.signIn(req, await readJson(req));
+      return send(res, out.status, out.body, "application/json", out.cookie ? { "Set-Cookie": out.cookie } : {});
+    }
+
     if (req.method === "GET" && url.pathname === "/api/sentence") {
+      if (denied(res, req)) return;
       const from = url.searchParams.get("from") === "eng" ? "eng" : "swe";
       const length = LENGTHS.has(url.searchParams.get("length")) ? url.searchParams.get("length") : "short";
       return send(res, 200, await nextSentence(from, length));
@@ -481,6 +522,7 @@ const server = http.createServer(async (req, res) => {
     }
 
     if (req.method === "POST" && url.pathname === "/api/grade") {
+      if (denied(res, req, { rateLimited: true })) return;
       const body = await readJson(req);
       if (!LANGS[body.from] || !LANGS[body.to] || !body.source || !body.attempt?.trim()) {
         return send(res, 400, { error: "Missing fields" });
@@ -494,10 +536,12 @@ const server = http.createServer(async (req, res) => {
         sourceKind: body.sourceKind,
         grader: body.grader ? resolveGrader(body.grader.model, body.grader.effort) : DEFAULT_GRADER,
       });
+      access.charge(result.usage.cost);
       return send(res, 200, result);
     }
 
     if (req.method === "POST" && url.pathname === "/api/studylist") {
+      if (denied(res, req, { rateLimited: true })) return;
       const body = await readJson(req);
       const candidates = (body.candidates ?? []).slice(0, 60).map((c) => ({
         key: String(c.key ?? "").slice(0, 120),
@@ -517,6 +561,7 @@ const server = http.createServer(async (req, res) => {
         candidates,
         grader: body.grader ? resolveGrader(body.grader.model, body.grader.effort) : DEFAULT_GRADER,
       });
+      access.charge(result.usage.cost);
       return send(res, 200, result);
     }
 
@@ -538,6 +583,9 @@ const server = http.createServer(async (req, res) => {
 });
 
 server.listen(PORT, () => {
-  console.log(`översätt → http://localhost:${PORT}  (grader: ${DEFAULT_GRADER.model}${DEFAULT_GRADER.effort ? `, effort ${DEFAULT_GRADER.effort}` : ""})`);
+  console.log(`glosor → http://localhost:${PORT}  (grader: ${DEFAULT_GRADER.model}${DEFAULT_GRADER.effort ? `, effort ${DEFAULT_GRADER.effort}` : ""})`);
+  console.log(`access: ${access.describe()}`);
+  if (access.GATED && !access.DAILY_BUDGET) console.warn("warning: no DAILY_BUDGET_USD set; spend is only limited per session.");
+  if (access.GATED && !process.env.SESSION_SECRET) console.warn("warning: no SESSION_SECRET set; sessions end whenever the server restarts.");
   for (const from of ["swe", "eng"]) refill(`${from}:short`, from, "short").catch((e) => console.error(e.message));
 });

@@ -36,6 +36,7 @@ nav {
   padding: 16px 20px;
   font-size: 13px;
 }
+nav[hidden] { display: none; }
 nav a, nav button {
   color: var(--faint);
   text-decoration: none;
@@ -105,6 +106,35 @@ kbd {
   border-radius: 3px;
   padding: 0 4px;
 }
+
+/* access gate ------------------------------------------------------------ */
+
+.gate { display: flex; flex-direction: column; align-items: flex-start; gap: 14px; }
+.gate .source { margin-bottom: 8px; }
+.gate input {
+  width: 100%;
+  max-width: 320px;
+  background: var(--surface);
+  color: var(--text);
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  padding: 10px 14px;
+  font: 16px var(--sans);
+  outline: none;
+}
+.gate input:focus { border-color: #3a3c41; }
+.gate input[hidden] { display: none; }
+.gate button {
+  background: none;
+  border: 1px solid rgba(217, 179, 108, 0.35);
+  border-radius: 999px;
+  color: var(--accent);
+  font: 13px var(--sans);
+  padding: 5px 16px;
+  cursor: pointer;
+}
+.gate button:disabled { cursor: default; opacity: 0.4; }
+.gate-error { margin: 0; min-height: 1.6em; font-size: 13px; color: var(--del); }
 
 /* diff ------------------------------------------------------------------ */
 

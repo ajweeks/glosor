@@ -3,7 +3,7 @@
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
-  <title>översätt</title>
+  <title>glosor</title>
   <link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 16 16'><circle cx='8' cy='8' r='6' fill='%23d9b36c'/></svg>">
   <link rel="preconnect" href="https://fonts.googleapis.com">
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
@@ -27,6 +27,16 @@
     </div>
     <div id="result"></div>
     <p id="hint" class="hint"></p>
+  </main>
+
+  <main id="gate" hidden>
+    <form id="gate-form" class="gate">
+      <p class="source">glosor</p>
+      <input id="gate-password" type="password" placeholder="password" autocomplete="current-password" hidden>
+      <div id="gate-captcha"></div>
+      <button id="gate-submit" type="submit">continue</button>
+      <p id="gate-error" class="gate-error" role="alert"></p>
+    </form>
   </main>
 
   <main id="history" hidden></main>

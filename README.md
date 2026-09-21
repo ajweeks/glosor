@@ -1,4 +1,4 @@
-# översätt
+# glosor
 
 A minimal Swedish ⇄ English translation game.
 
@@ -20,5 +20,40 @@ ANTHROPIC_API_KEY=sk-ant-... npm start   # http://localhost:5173
 ```
 
 Grader: Claude Sonnet 5 at medium effort by default. Every graded answer has a small picker under the feedback that regrades it with another model or thinking level: Haiku 4.5, Sonnet 5 (low to xhigh), Opus 5 (medium to xhigh), or Fable 5.1 (medium/high). A regrade replaces that answer's recorded mistakes instead of adding to them. Set the default with environment variables, e.g. `MODEL=claude-opus-5 EFFORT=high npm start`.
+
+## Hosting
+
+Run locally it's open, with no captcha, password or limits. Before putting it on the internet, set these, since every grading call is billed to your API key:
+
+```sh
+ANTHROPIC_API_KEY=sk-ant-...
+TURNSTILE_SITE_KEY=0x...  TURNSTILE_SECRET_KEY=0x...   # Cloudflare Turnstile (free): dash.cloudflare.com → Turnstile → add your hostname
+ACCESS_PASSWORD=...                                     # optional: also require a shared password
+DAILY_BUDGET_USD=5                                      # stop grading once today's estimated spend (UTC) reaches this
+RATE_LIMIT=60                                           # Claude calls per session per hour (default 60)
+SESSION_SECRET=$(openssl rand -hex 32)                  # keeps sessions valid across restarts
+TRUST_PROXY=1                                           # behind nginx/Caddy: use X-Forwarded-For for the client IP
+```
+
+- **Sessions.** Visitors pass the captcha (and password, if set) once and get a signed, `HttpOnly` / `Secure` / `SameSite=Strict` cookie that lasts 12 hours (`SESSION_HOURS`). Every API route needs it; an expired session brings the gate back and resumes where the visitor was. Ten failed sign-ins from one IP lock it out for 15 minutes.
+- **Limits.** The captcha only proves a human opened the session. `RATE_LIMIT` bounds one session and `DAILY_BUDGET_USD` bounds everyone together, so that's the number that caps your bill. Spend is counted in memory, so a restart resets the day's total. Also set a monthly spend limit in the Anthropic Console as a backstop.
+- **HTTPS.** Serve it behind a TLS-terminating proxy (Caddy does this automatically). The session cookie is `Secure`, so plain http only works on `localhost`, and only in Chrome and Firefox.
+- **Headers.** Every response carries a Content-Security-Policy (scripts from this origin and Turnstile only, no framing), `nosniff` and a referrer policy.
+
+To test the gate locally, use Cloudflare's always-pass test keys: `TURNSTILE_SITE_KEY=1x00000000000000000000AA TURNSTILE_SECRET_KEY=1x0000000000000000000000000000000AA`.
+
+### Hosting from home
+
+`./start.sh` runs the whole thing with one command. The first run copies `.env.example` to `.env` (gitignored, mode 600) with a fresh `SESSION_SECRET`; fill in the rest and run it again. It refuses to start while a key is missing, installs dependencies and builds the corpus if needed, then starts the server.
+
+To reach it from the internet without opening ports, use a [Cloudflare Tunnel](https://developers.cloudflare.com/cloudflare-one/connections/connect-networks/). It needs a domain on Cloudflare. Once:
+
+```sh
+cloudflared tunnel login
+cloudflared tunnel create glosor
+cloudflared tunnel route dns glosor glosor.yourdomain.com   # also add this hostname to the Turnstile widget
+```
+
+Then set `TUNNEL_NAME=glosor` in `.env`, and `./start.sh` runs the tunnel alongside the server and sets `TRUST_PROXY=1` for it.
 
 Keys: **Enter** submits and then moves to the next sentence · **Shift+Enter** adds a newline · **Esc** skips.

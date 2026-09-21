@@ -8,12 +8,22 @@ const esc = (s) =>
 // Local storage
 
 const KEYS = {
-  history: "oversatt.history",
-  mistakes: "oversatt.mistakes",
-  studylog: "oversatt.studylog",
-  dir: "oversatt.dir",
-  length: "oversatt.length",
+  history: "glosor.history",
+  mistakes: "glosor.mistakes",
+  studylog: "glosor.studylog",
+  dir: "glosor.dir",
+  length: "glosor.length",
 };
+
+// The app used to be called översätt; carry its saved data over to the new keys once.
+try {
+  for (const key of Object.values(KEYS)) {
+    const legacy = key.replace(/^glosor\./, "oversatt.");
+    const value = localStorage.getItem(legacy);
+    if (value !== null && localStorage.getItem(key) === null) localStorage.setItem(key, value);
+    localStorage.removeItem(legacy);
+  }
+} catch {}
 
 function load(key, fallback) {
   try {
@@ -143,6 +153,109 @@ function renderBubble(entry, priorCounts) {
 }
 
 // ---------------------------------------------------------------------------
+// Access gate: a captcha and/or password, when the server is hosted with one.
+
+let accessCfg = null; // { gated, captcha: siteKey | null, password, authed }
+let gating = null; // resolves once the visitor is through; set while the gate is showing
+
+// JSON fetch that throws the server's error message. A 401 means the session is gone (expired, or the
+// server restarted): bring the gate back, then carry on where the visitor was.
+async function api(url, opts) {
+  const res = await fetch(url, opts);
+  const body = await res.json().catch(() => ({}));
+  if (res.status === 401 && body.auth) showGate().then(resume);
+  if (!res.ok) throw new Error(body.error || res.statusText);
+  return body;
+}
+const postJson = (url, data) => api(url, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(data) });
+
+let turnstileScript = null;
+const loadTurnstile = () =>
+  (turnstileScript ??= new Promise((resolve, reject) => {
+    const s = document.createElement("script");
+    s.src = "https://challenges.cloudflare.com/turnstile/v0/api.js?render=explicit";
+    s.onload = resolve;
+    s.onerror = () => {
+      turnstileScript = null;
+      reject(new Error("Couldn't load the captcha. Refresh to try again."));
+    };
+    document.head.append(s);
+  }));
+
+function showGate() {
+  if (!accessCfg?.gated) return Promise.resolve();
+  gating ??= new Promise((resolve) => {
+    const gate = $("#gate");
+    const form = $("#gate-form");
+    const pw = $("#gate-password");
+    const btn = $("#gate-submit");
+    const err = $("#gate-error");
+    let token = null;
+    let widget = null;
+    let failed = false;
+    const ready = () => (btn.disabled = !!accessCfg.captcha && !token);
+
+    for (const id of ["play", "history", "mistakes"]) $(`#${id}`).hidden = true;
+    $("nav").hidden = true;
+    gate.hidden = false;
+    pw.hidden = !accessCfg.password;
+    pw.value = "";
+    err.textContent = "";
+    ready();
+    if (accessCfg.password) pw.focus();
+
+    if (accessCfg.captcha) {
+      loadTurnstile()
+        .then(() => {
+          widget = turnstile.render("#gate-captcha", {
+            sitekey: accessCfg.captcha,
+            theme: "dark",
+            callback: (t) => {
+              token = t;
+              ready();
+              // Captcha only: nothing else to fill in. After a failure, wait for a click instead of looping.
+              if (!accessCfg.password && !failed) form.requestSubmit();
+            },
+            "expired-callback": () => ((token = null), ready()),
+            "error-callback": () => void (err.textContent = "The captcha couldn't verify this browser. Refresh to try again."),
+          });
+        })
+        .catch((e) => (err.textContent = e.message));
+    }
+
+    form.onsubmit = async (e) => {
+      e.preventDefault();
+      btn.disabled = true;
+      err.textContent = "";
+      try {
+        await postJson("/api/session", { captcha: token, password: pw.value });
+        if (widget !== null) turnstile.remove(widget);
+        gate.hidden = true;
+        $("nav").hidden = false;
+        gating = null;
+        resolve();
+      } catch (e) {
+        failed = true;
+        err.textContent = e.message;
+        // Turnstile tokens are single-use: get a fresh one for the next try.
+        if (widget !== null) {
+          token = null;
+          turnstile.reset(widget);
+        }
+        ready();
+      }
+    };
+  });
+  return gating;
+}
+
+// Back to whatever the gate interrupted.
+function resume() {
+  route();
+  if (!current) nextRound();
+}
+
+// ---------------------------------------------------------------------------
 // Grader picker: regrade an answer with a different model / thinking level.
 
 const MODEL_NAMES = {
@@ -239,12 +352,7 @@ els.length.addEventListener("click", () => {
 
 const pickFrom = () => (dir === "mix" ? (Math.random() < 0.5 ? "swe" : "eng") : dir);
 
-async function fetchSentence(from) {
-  const res = await fetch(`/api/sentence?from=${from}&length=${length}`);
-  const body = await res.json();
-  if (!res.ok) throw new Error(body.error || res.statusText);
-  return body;
-}
+const fetchSentence = (from) => api(`/api/sentence?from=${from}&length=${length}`);
 
 function prefetch() {
   const from = pickFrom();
@@ -326,21 +434,15 @@ async function gradeEntry(entry, grader) {
   entry.notice = null;
   rerender(entry);
   try {
-    const res = await fetch("/api/grade", {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({
-        from: entry.from,
-        to: entry.to,
-        source: entry.source,
-        references: entry.references.map((r) => r.text),
-        sourceKind: entry.sourceInfo?.kind,
-        attempt: entry.attempt,
-        grader,
-      }),
+    const body = await postJson("/api/grade", {
+      from: entry.from,
+      to: entry.to,
+      source: entry.source,
+      references: entry.references.map((r) => r.text),
+      sourceKind: entry.sourceInfo?.kind,
+      attempt: entry.attempt,
+      grader,
     });
-    const body = await res.json();
-    if (!res.ok) throw new Error(body.error || res.statusText);
     if (previous) unrecordMistakes(entry);
     // Every grading call is kept for cost tracking, including regrades that replaced the shown result.
     entry.gradings = [...(entry.gradings ?? []), { ts: Date.now(), ...body.grader, ...body.usage }];
@@ -402,6 +504,7 @@ els.answer.addEventListener("keydown", (e) => {
 });
 
 document.addEventListener("keydown", (e) => {
+  if (gating) return;
   if (location.hash.startsWith("#/history") || location.hash.startsWith("#/mistakes")) return;
   if (e.target === els.answer || e.target.tagName === "SELECT") return;
   if (e.key === "Enter" && (current?.entry?.status === "done" || current?.entry?.status === "error" || !current)) {
@@ -560,13 +663,7 @@ async function buildStudyList() {
   const session = study; // hiding the panel mid-flight abandons the result
   renderMistakes();
   try {
-    const res = await fetch("/api/studylist", {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ candidates: candidates.map(candidatePayload) }),
-    });
-    const body = await res.json();
-    if (!res.ok) throw new Error(body.error || res.statusText);
+    const body = await postJson("/api/studylist", { candidates: candidates.map(candidatePayload) });
     // The call is billed whether or not the panel is still open, so it's logged either way.
     const call = { ts: Date.now(), mode: session.mode, sent: candidates.length, kept: body.items.length, ...body.grader, ...body.usage };
     studyLog = [call, ...studyLog].slice(0, 200);
@@ -754,6 +851,7 @@ function renderMistakes() {
 }
 
 function route() {
+  if (gating) return;
   const view = location.hash.replace(/^#\/?/, "") || "play";
   for (const id of ["play", "history", "mistakes"]) $(`#${id}`).hidden = id !== view;
   document.querySelectorAll("nav a").forEach((a) => a.classList.toggle("active", a.getAttribute("href") === `#/${view === "play" ? "" : view}`));
@@ -764,5 +862,11 @@ function route() {
 
 window.addEventListener("hashchange", route);
 renderToggles();
-route();
-nextRound();
+fetch("/api/access")
+  .then((r) => r.json())
+  .catch(() => null)
+  .then(async (cfg) => {
+    accessCfg = cfg;
+    if (cfg && !cfg.authed) await showGate();
+    resume();
+  });
