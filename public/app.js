@@ -13,6 +13,7 @@ const KEYS = {
   studylog: "glosor.studylog",
   dir: "glosor.dir",
   length: "glosor.length",
+  session: "glosor.session",
 };
 
 // The app used to be called översätt; carry its saved data over to the new keys once.
@@ -157,11 +158,14 @@ function renderBubble(entry, priorCounts) {
 
 let accessCfg = null; // { gated, captcha: siteKey | null, password, authed }
 let gating = null; // resolves once the visitor is through; set while the gate is showing
+// The session token, sent as a header too: some browsers (DuckDuckGo on mobile) don't send the cookie back.
+let sessionToken = load(KEYS.session, null);
 
-// JSON fetch that throws the server's error message. A 401 means the session is gone (expired, or the
-// server restarted): bring the gate back, then carry on where the visitor was.
-async function api(url, opts) {
-  const res = await fetch(url, opts);
+// JSON fetch that sends the session and throws the server's error message. A 401 means the session is
+// gone (expired, or the server restarted): bring the gate back, then carry on where the visitor was.
+async function api(url, opts = {}) {
+  const headers = { ...opts.headers, ...(sessionToken && { Authorization: `Bearer ${sessionToken}` }) };
+  const res = await fetch(url, { ...opts, headers });
   const body = await res.json().catch(() => ({}));
   if (res.status === 401 && body.auth) showGate().then(resume);
   if (!res.ok) throw new Error(body.error || res.statusText);
@@ -182,6 +186,16 @@ const loadTurnstile = () =>
     document.head.append(s);
   }));
 
+function showPassword(on) {
+  $("#gate-password").type = on ? "text" : "password";
+  $("#gate-show").textContent = on ? "hide" : "show";
+  $("#gate-show").setAttribute("aria-pressed", on);
+}
+$("#gate-show").addEventListener("click", () => {
+  showPassword($("#gate-password").type === "password");
+  $("#gate-password").focus();
+});
+
 function showGate() {
   if (!accessCfg?.gated) return Promise.resolve();
   gating ??= new Promise((resolve) => {
@@ -196,10 +210,11 @@ function showGate() {
     const ready = () => (btn.disabled = !!accessCfg.captcha && !token);
 
     for (const id of ["play", "history", "mistakes"]) $(`#${id}`).hidden = true;
-    $("nav").hidden = true;
+    $("nav").hidden = $(".brand").hidden = true;
     gate.hidden = false;
-    pw.hidden = !accessCfg.password;
+    $("#gate-pw").hidden = !accessCfg.password;
     pw.value = "";
+    showPassword(false);
     err.textContent = "";
     ready();
     if (accessCfg.password) pw.focus();
@@ -228,10 +243,12 @@ function showGate() {
       btn.disabled = true;
       err.textContent = "";
       try {
-        await postJson("/api/session", { captcha: token, password: pw.value });
+        const out = await postJson("/api/session", { captcha: token, password: pw.value });
+        sessionToken = out.token ?? null;
+        save(KEYS.session, sessionToken);
         if (widget !== null) turnstile.remove(widget);
         gate.hidden = true;
-        $("nav").hidden = false;
+        $("nav").hidden = $(".brand").hidden = false;
         gating = null;
         resolve();
       } catch (e) {
@@ -308,11 +325,12 @@ const LENGTHS = [
   { id: "long", label: "long" },
   { id: "passage", label: "passage" },
 ];
-let dir = load(KEYS.dir, "swe");
+let dir = load(KEYS.dir, "mix");
 let length = load(KEYS.length, "short");
 if (!LENGTHS.some((l) => l.id === length)) length = "short";
-let current = null; // { sentence, entry? }
+let current = null; // { sentence, entry?, revealed? }
 let prefetched = {};
+let round = 0; // bumped per nextRound, so a slower earlier load can't overwrite a newer one
 
 const els = {
   source: $("#source"),
@@ -338,7 +356,7 @@ function settingsChanged() {
   save(KEYS.length, length);
   renderToggles();
   prefetched = {};
-  if (!current?.entry && !els.answer.value.trim()) nextRound();
+  if (!current?.entry && !current?.revealed && !els.answer.value.trim()) nextRound();
 }
 
 els.dir.addEventListener("click", () => {
@@ -360,6 +378,7 @@ function prefetch() {
 }
 
 async function nextRound() {
+  const thisRound = ++round;
   current = null;
   els.result.innerHTML = "";
   els.answer.value = "";
@@ -374,11 +393,13 @@ async function nextRound() {
     if (prefetched.promise) sentence = await prefetched.promise;
     if (!sentence || (dir !== "mix" && sentence.from !== dir) || sentence.length !== length) sentence = await fetchSentence(pickFrom());
   } catch (e) {
+    if (thisRound !== round) return;
     els.source.textContent = `Couldn't load a sentence (${e.message}).`;
-    els.hint.innerHTML = `<kbd>Enter</kbd> to try again`;
+    els.hint.innerHTML = `<button class="hint-btn" data-next>try again</button><span class="keys"> <kbd>Enter</kbd></span>`;
     els.answer.disabled = false;
     return;
   }
+  if (thisRound !== round) return;
   prefetch();
 
   current = { sentence };
@@ -394,12 +415,32 @@ async function nextRound() {
   autosize();
   els.answer.disabled = false;
   els.answer.focus();
-  els.hint.innerHTML = `<kbd>Enter</kbd> submit · <kbd>Shift</kbd>+<kbd>Enter</kbd> newline · <kbd>Esc</kbd> skip`;
+  els.hint.innerHTML =
+    `<span class="keys"><kbd>Esc</kbd> </span><button class="hint-btn" data-skip>skip</button> ` +
+    `<button class="hint-btn" data-submit disabled>submit</button><span class="keys"> <kbd>Enter</kbd></span>`;
+}
+
+// Skipping shows the reference translation and closes the round to answers; the next press moves on.
+function skip() {
+  if (!current || current.entry || current.revealed) return nextRound();
+  current.revealed = true;
+  els.answer.disabled = true;
+  els.result.innerHTML = renderReveal(current.sentence);
+  els.hint.innerHTML = `<button class="hint-btn" data-next>next</button><span class="keys"> <kbd>Enter</kbd></span>`;
+}
+
+function renderReveal(sentence) {
+  const [first, ...rest] = sentence.references;
+  const lang = sentence.to === "swe" ? "sv" : "en";
+  const others = rest.length ? `<div class="others" lang="${lang}">${rest.map((r) => `<div>${esc(r.text)}</div>`).join("")}</div>` : "";
+  return `<div class="diff reveal">
+      <div class="diff-row"><span class="diff-label">translation</span><span lang="${lang}">${esc(first?.text ?? "")}</span></div>
+    </div>${others}`;
 }
 
 async function submit() {
   const attempt = els.answer.value.trim();
-  if (!current || current.entry || !attempt) return;
+  if (!current || current.entry || current.revealed || !attempt) return;
   const s = current.sentence;
   const entry = {
     id: crypto.randomUUID(),
@@ -414,6 +455,7 @@ async function submit() {
   };
   current.entry = entry;
   els.answer.disabled = true;
+  syncSubmit();
 
   const best = closestReference(attempt, s.references);
   // Identical to a reference, up to case, punctuation and contractions: no need to ask the grader.
@@ -480,7 +522,7 @@ function finish(entry) {
     save(KEYS.history, history);
   }
   renderResult(entry);
-  els.hint.innerHTML = `<kbd>Enter</kbd> next`;
+  els.hint.innerHTML = `<button class="hint-btn" data-next>next</button><span class="keys"> <kbd>Enter</kbd></span>`;
 }
 
 function renderResult(entry) {
@@ -492,22 +534,39 @@ function autosize() {
   els.answer.style.height = "auto";
   els.answer.style.height = `${els.answer.scrollHeight + 2}px`;
 }
-els.answer.addEventListener("input", autosize);
+// The submit button is live only while there's an answer to send.
+function syncSubmit() {
+  const btn = els.hint.querySelector("[data-submit]");
+  if (btn) btn.disabled = els.answer.disabled || !els.answer.value.trim();
+}
+els.answer.addEventListener("input", () => (autosize(), syncSubmit()));
 
 els.answer.addEventListener("keydown", (e) => {
   if (e.key === "Enter" && !e.shiftKey) {
     e.preventDefault();
     submit();
   } else if (e.key === "Escape") {
-    nextRound();
+    skip();
   }
+});
+
+// Tappable twins of Enter / Esc, for touch screens without those keys. Keeping the answer box focused
+// stops a phone from closing its keyboard mid-tap, which shifts the layout and drops the click.
+els.hint.addEventListener("mousedown", (e) => {
+  if (e.target.closest(".hint-btn")) e.preventDefault();
+});
+els.hint.addEventListener("click", (e) => {
+  if (e.target.closest("[data-next]")) nextRound();
+  else if (e.target.closest("[data-skip]")) skip();
+  else if (e.target.closest("[data-submit]")) submit();
 });
 
 document.addEventListener("keydown", (e) => {
   if (gating) return;
   if (location.hash.startsWith("#/history") || location.hash.startsWith("#/mistakes")) return;
   if (e.target === els.answer || e.target.tagName === "SELECT") return;
-  if (e.key === "Enter" && (current?.entry?.status === "done" || current?.entry?.status === "error" || !current)) {
+  const over = !current || current.revealed || current.entry?.status === "done" || current.entry?.status === "error";
+  if ((e.key === "Enter" || (e.key === "Escape" && current?.revealed)) && over) {
     e.preventDefault();
     nextRound();
   }
@@ -551,7 +610,8 @@ function renderHistoryBody(h) {
 function renderHistory() {
   const el = $("#history");
   if (!history.length) {
-    el.innerHTML = `<h2>history</h2><p class="empty">Nothing yet.</p>`;
+    el.innerHTML = `<h2><span>history</span><span class="h2-actions">${dataActions()}</span></h2><p class="empty">Nothing yet.</p>`;
+    wireData(el);
     return;
   }
   const avg = Math.round(history.reduce((s, h) => s + (h.result?.score ?? 0), 0) / history.length);
@@ -560,7 +620,7 @@ function renderHistory() {
   // Study lists are billed too, and survive clearing the history, so they're counted separately.
   const studied = studyLog.reduce((s, c) => s + (c.cost ?? 0), 0);
   const tip = `${calls} grading call${calls === 1 ? "" : "s"} ${fmtCost(graded)}${studyLog.length ? ` · ${studyLog.length} study list${studyLog.length === 1 ? "" : "s"} ${fmtCost(studied)}` : ""} — estimated from token usage × list price`;
-  el.innerHTML = `<h2><span>history · ${history.length} · avg ${avg} · <span title="${esc(tip)}">${fmtCost(graded + studied)} spent</span></span><button class="clear" data-clear>clear</button></h2>
+  el.innerHTML = `<h2><span>history · ${history.length} · avg ${avg} · <span title="${esc(tip)}">${fmtCost(graded + studied)} spent</span></span><span class="h2-actions">${dataActions()}<button class="clear" data-clear>clear</button></span></h2>
     ${history
       .map((h) => {
         const sc = h.result?.score ?? 0;
@@ -584,6 +644,7 @@ function renderHistory() {
       d.dataset.rendered = "1";
     })
   );
+  wireData(el);
   el.querySelector("[data-clear]").addEventListener("click", () => {
     if (!confirm("Delete all history? Mistake tracking is kept.")) return;
     history = [];
@@ -802,7 +863,8 @@ function renderMistakes() {
   if (!list.length) {
     study = null;
     el.classList.remove("wide");
-    el.innerHTML = `<h2>mistakes</h2><p class="empty">None recorded yet.</p>`;
+    el.innerHTML = `<h2><span>mistakes</span><span class="h2-actions">${dataActions()}</span></h2><p class="empty">None recorded yet.</p>`;
+    wireData(el);
     return;
   }
   const repeats = list.filter((m) => m.count > 1).length;
@@ -811,6 +873,7 @@ function renderMistakes() {
   el.innerHTML = `<h2><span>mistakes · ${list.length} distinct · ${repeats} repeated · ${pending} to review</span>
     <span class="h2-actions">
       <button class="link" data-study>${study ? "hide study list" : "study list"}</button>
+      ${dataActions()}
       <button class="clear" data-clear>clear</button>
     </span></h2>
     ${renderStudy()}
@@ -837,6 +900,7 @@ function renderMistakes() {
       )
       .join("")}`;
   wireStudy(el);
+  wireData(el);
   el.querySelector("[data-study]").addEventListener("click", () => {
     study = study ? null : { mode: "important", size: 20, status: "idle", candidates: [], items: [], picked: new Set() };
     renderMistakes();
@@ -847,6 +911,109 @@ function renderMistakes() {
     study = null;
     save(KEYS.mistakes, mistakes);
     renderMistakes();
+  });
+}
+
+// ---------------------------------------------------------------------------
+// Export / import: everything saved, as JSON on the clipboard. Importing merges instead of replacing,
+// and merging the same data twice changes nothing, so it's safe to sync devices back and forth.
+
+const exportData = () => JSON.stringify({ glosor: 1, history, mistakes, studyLog });
+
+// Pasted JSON may come from anywhere, and several fields are rendered unescaped, so numbers are
+// forced to numbers and ids to the characters crypto.randomUUID() produces.
+const num = (x) => (Number.isFinite(Number(x)) ? Number(x) : 0);
+const safeId = (x) => typeof x === "string" && /^[\w-]{1,64}$/.test(x);
+
+function cleanEntry(h) {
+  if (!h || !safeId(h.id) || typeof h.source !== "string" || !Array.isArray(h.references)) return null;
+  const e = { ...h, ts: num(h.ts) };
+  if (e.result) e.result = { ...e.result, score: num(e.result.score), mistakes: Array.isArray(e.result.mistakes) ? e.result.mistakes : [] };
+  if (Array.isArray(e.gradings)) e.gradings = e.gradings.map((g) => ({ ...g, input: num(g.input), output: num(g.output), cost: g.cost == null ? null : num(g.cost) }));
+  return e;
+}
+
+function cleanMistake(m, key) {
+  if (!m || key === "__proto__" || m.key !== key || !Array.isArray(m.examples)) return null;
+  return { ...m, examples: m.examples.filter((e) => e && typeof e === "object"), category: String(m.category ?? ""), count: num(m.count), lastSeen: num(m.lastSeen), reviewedAt: m.reviewedAt ? num(m.reviewedAt) : undefined };
+}
+
+// Returns how many history entries and mistake keys were new.
+function mergeData(data) {
+  if (data?.glosor !== 1) throw new Error("not glosor data");
+  const known = new Set(history.map((h) => h.id));
+  const newEntries = (Array.isArray(data.history) ? data.history : []).map(cleanEntry).filter((h) => h && !known.has(h.id));
+  history = [...history, ...newEntries].sort((a, b) => b.ts - a.ts);
+
+  let newKeys = 0;
+  for (const [key, raw] of Object.entries(data.mistakes ?? {})) {
+    const m = cleanMistake(raw, key);
+    if (!m) continue;
+    const local = mistakes[key];
+    if (!local) {
+      mistakes[key] = m;
+      newKeys++;
+      continue;
+    }
+    // Only the latest 12 examples are kept, so the true combined count is unknowable. Taking the
+    // larger count plus any examples this device hasn't seen never double-counts a re-import.
+    const seen = new Set(local.examples.map((e) => e.entryId));
+    const fresh = m.examples.filter((e) => !seen.has(e.entryId));
+    local.count = Math.max(local.count, m.count, local.count + fresh.length);
+    local.examples = [...local.examples, ...fresh].sort((a, b) => (b.ts ?? 0) - (a.ts ?? 0)).slice(0, 12);
+    local.lastSeen = Math.max(local.lastSeen ?? 0, m.lastSeen);
+    if (m.reviewedAt) local.reviewedAt = Math.max(local.reviewedAt ?? 0, m.reviewedAt);
+  }
+
+  const calls = new Set(studyLog.map((c) => c.ts));
+  const newCalls = (Array.isArray(data.studyLog) ? data.studyLog : []).filter((c) => c && !calls.has(num(c.ts)));
+  studyLog = [...studyLog, ...newCalls.map((c) => ({ ...c, ts: num(c.ts), cost: c.cost == null ? null : num(c.cost) }))]
+    .sort((a, b) => b.ts - a.ts)
+    .slice(0, 200);
+
+  save(KEYS.history, history);
+  save(KEYS.mistakes, mistakes);
+  save(KEYS.studylog, studyLog);
+  return { entries: newEntries.length, keys: newKeys };
+}
+
+const dataActions = () =>
+  `<button class="link" data-export title="Copy all history and mistakes to the clipboard as JSON">copy</button>
+   <button class="link" data-import title="Merge history and mistakes copied from another browser">merge</button>`;
+
+function flash(btn, text) {
+  const label = btn.textContent;
+  btn.textContent = text;
+  setTimeout(() => (btn.textContent = label), 1600);
+}
+
+// Reading the clipboard needs permission and isn't everywhere; a paste prompt is the fallback.
+async function readClipboard() {
+  try {
+    return await navigator.clipboard.readText();
+  } catch {
+    return prompt("Paste the copied glosor data:") ?? "";
+  }
+}
+
+function wireData(el) {
+  el.querySelector("[data-export]").addEventListener("click", (e) =>
+    navigator.clipboard?.writeText(exportData()).then(() => flash(e.target, "copied"), () => flash(e.target, "couldn't copy"))
+  );
+  el.querySelector("[data-import]").addEventListener("click", async (e) => {
+    const btn = e.target;
+    const text = (await readClipboard()).trim();
+    if (!text) return;
+    let added;
+    try {
+      added = mergeData(JSON.parse(text));
+    } catch {
+      return flash(btn, "not glosor data");
+    }
+    route();
+    // route() rebuilt the page, so the button that was clicked is gone.
+    const fresh = document.querySelector(`#${el.id} [data-import]`);
+    if (fresh) flash(fresh, `+${added.entries} answers, +${added.keys} mistakes`);
   });
 }
 
@@ -862,8 +1029,7 @@ function route() {
 
 window.addEventListener("hashchange", route);
 renderToggles();
-fetch("/api/access")
-  .then((r) => r.json())
+api("/api/access")
   .catch(() => null)
   .then(async (cfg) => {
     accessCfg = cfg;

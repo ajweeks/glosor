@@ -36,6 +36,17 @@ nav {
   padding: 16px 20px;
   font-size: 13px;
 }
+/* Same row as the nav: its 13px text at line-height 1.6 is 21px tall. */
+.brand {
+  position: fixed;
+  top: 0;
+  left: 0;
+  padding: 16px 20px;
+  font-size: 14px;
+  line-height: 21px;
+  color: var(--muted);
+  user-select: none;
+}
 nav[hidden] { display: none; }
 nav a, nav button {
   color: var(--faint);
@@ -100,6 +111,22 @@ textarea:disabled { opacity: 0.75; }
   color: var(--faint);
   text-align: center;
 }
+.hint-btn {
+  background: none;
+  border: 1px solid var(--line);
+  border-radius: 999px;
+  color: var(--muted);
+  font: 13px var(--sans);
+  padding: 5px 16px;
+  cursor: pointer;
+}
+.hint-btn:hover:not(:disabled) { color: var(--text); }
+.hint-btn:disabled { cursor: default; opacity: 0.4; }
+.hint .hint-btn + .hint-btn { margin-left: 10px; }
+/* Keyboard shortcuts mean nothing on a touch screen; the buttons stay. */
+@media (hover: none) and (pointer: coarse) {
+  .hint .keys { display: none; }
+}
 kbd {
   font: inherit;
   border: 1px solid var(--line);
@@ -111,6 +138,8 @@ kbd {
 
 .gate { display: flex; flex-direction: column; align-items: flex-start; gap: 14px; }
 .gate .source { margin-bottom: 8px; }
+.gate-pw { position: relative; width: 100%; max-width: 320px; }
+.gate-pw[hidden] { display: none; }
 .gate input {
   width: 100%;
   max-width: 320px;
@@ -123,16 +152,27 @@ kbd {
   outline: none;
 }
 .gate input:focus { border-color: #3a3c41; }
-.gate input[hidden] { display: none; }
+.gate-pw input { max-width: none; padding-right: 64px; }
+.gate .gate-pw button {
+  position: absolute;
+  right: 6px;
+  top: 50%;
+  transform: translateY(-50%);
+  border: none;
+  color: var(--muted);
+  padding: 5px 10px;
+}
+.gate .gate-pw button:hover { color: var(--text); }
 .gate button {
   background: none;
-  border: 1px solid rgba(217, 179, 108, 0.35);
+  border: 1px solid var(--line);
   border-radius: 999px;
-  color: var(--accent);
+  color: var(--muted);
   font: 13px var(--sans);
   padding: 5px 16px;
   cursor: pointer;
 }
+.gate button:hover:not(:disabled) { color: var(--text); }
 .gate button:disabled { cursor: default; opacity: 0.4; }
 .gate-error { margin: 0; min-height: 1.6em; font-size: 13px; color: var(--del); }
 
@@ -258,6 +298,8 @@ h2 {
   color: var(--muted);
   margin: 0 0 18px;
   display: flex;
+  flex-wrap: wrap;
+  gap: 6px 16px;
   justify-content: space-between;
 }
 .empty { color: var(--faint); }
@@ -449,4 +491,9 @@ main#mistakes.wide { max-width: 940px; }
   .entry .body { padding-left: 0; }
   .others { padding-left: 0; }
   .diff-label { flex-basis: 52px; }
+}
+
+/* The nav fills a phone's width; the title gives way rather than overlap it. */
+@media (max-width: 420px) {
+  .brand { display: none; }
 }

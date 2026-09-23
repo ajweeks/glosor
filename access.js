@@ -57,19 +57,27 @@ function readCookie(req, name) {
   return null;
 }
 
-// The session id, or null when the cookie is missing, forged or expired.
+// The session token travels in the cookie and, for browsers that drop or withhold it (DuckDuckGo's
+// mobile browser), in an Authorization header the page sets from the sign-in response.
+function tokenOf(req) {
+  const auth = String(req.headers.authorization ?? "");
+  return auth.startsWith("Bearer ") ? auth.slice(7).trim() : readCookie(req, COOKIE) ?? "";
+}
+
+// The session id, or null when the token is missing, forged or expired.
 export function sessionOf(req) {
-  const [id, exp, sig] = (readCookie(req, COOKIE) ?? "").split(".");
+  const [id, exp, sig] = tokenOf(req).split(".");
   if (!id || !exp || !sig || !safeEqual(sig, sign(`${id}.${exp}`))) return null;
   return Number(exp) > Date.now() ? id : null;
 }
 
 // Always Secure: browsers still accept it on http://localhost (Chrome, Firefox), and in production it
 // can't leak over plain http even when a proxy rewrites Host or forgets X-Forwarded-Proto.
-function newSessionCookie() {
+function newSession() {
   const id = crypto.randomBytes(16).toString("hex");
   const exp = Date.now() + SESSION_MS;
-  return `${COOKIE}=${id}.${exp}.${sign(`${id}.${exp}`)}; Path=/; HttpOnly; Secure; SameSite=Strict; Max-Age=${SESSION_MS / 1000}`;
+  const token = `${id}.${exp}.${sign(`${id}.${exp}`)}`;
+  return { token, cookie: `${COOKIE}=${token}; Path=/; HttpOnly; Secure; SameSite=Strict; Max-Age=${SESSION_MS / 1000}` };
 }
 
 export function clientIp(req) {
@@ -123,7 +131,8 @@ export async function signIn(req, body) {
   if (CAPTCHA_SITE_KEY && !(await verifyCaptcha(body?.captcha, ip))) return fail("Captcha check failed. Please try again.");
   if (PASSWORD && !passwordOk(body?.password)) return fail("Wrong password.");
   failures.delete(ip);
-  return { status: 200, body: { ok: true }, cookie: newSessionCookie() };
+  const { token, cookie } = newSession();
+  return { status: 200, body: { ok: true, token }, cookie };
 }
 
 // ---------------------------------------------------------------------------

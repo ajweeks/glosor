@@ -11,6 +11,7 @@
   <link rel="stylesheet" href="style.css">
 </head>
 <body>
+  <div class="brand">glosor</div>
   <nav>
     <button id="dir" title="Translation direction"></button>
     <button id="length" title="Text length"></button>
@@ -32,7 +33,10 @@
   <main id="gate" hidden>
     <form id="gate-form" class="gate">
       <p class="source">glosor</p>
-      <input id="gate-password" type="password" placeholder="password" autocomplete="current-password" hidden>
+      <div id="gate-pw" class="gate-pw" hidden>
+        <input id="gate-password" type="password" placeholder="password" autocomplete="current-password">
+        <button id="gate-show" type="button" aria-controls="gate-password" aria-pressed="false">show</button>
+      </div>
       <div id="gate-captcha"></div>
       <button id="gate-submit" type="submit">continue</button>
       <p id="gate-error" class="gate-error" role="alert"></p>

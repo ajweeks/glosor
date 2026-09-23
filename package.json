@@ -5,9 +5,13 @@
   "type": "module",
   "scripts": {
     "start": "node server.js",
-    "build-corpus": "node scripts/build-corpus.mjs"
+    "build-corpus": "node scripts/build-corpus.mjs",
+    "test": "node --test"
   },
   "dependencies": {
     "@anthropic-ai/sdk": "^0.127.0"
+  },
+  "devDependencies": {
+    "jsdom": "^30.1.1"
   }
 }

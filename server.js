@@ -1,4 +1,5 @@
 import http from "node:http";
+import crypto from "node:crypto";
 import fs from "node:fs/promises";
 import { readFileSync, existsSync } from "node:fs";
 import path from "node:path";
@@ -12,12 +13,8 @@ const PORT = Number(process.env.PORT) || 5173;
 // Grader models the UI may pick from, with the effort levels offered for each (Haiku 4.5 has no effort setting).
 const GRADERS = {
   "claude-haiku-4-5": [null],
-  "claude-sonnet-5": ["low", "medium", "high", "xhigh"],
-  "claude-opus-5": ["medium", "high", "xhigh"],
-  "claude-fable-5-1": ["medium", "high"],
+  "claude-sonnet-5": ["low", "medium", "high"],
 };
-// These models can decline requests on safety grounds; let the API retry on a fallback model instead.
-const FALLBACK_MODELS = new Set(["claude-opus-5", "claude-fable-5-1"]);
 
 function resolveGrader(model, effort) {
   if (!GRADERS[model]) model = "claude-sonnet-5";
@@ -29,12 +26,9 @@ function resolveGrader(model, effort) {
 const PRICES = {
   "claude-haiku-4-5": { input: 1, output: 5 },
   "claude-sonnet-5": { input: 2, output: 10 },
-  "claude-opus-5": { input: 5, output: 25 },
-  "claude-opus-4-8": { input: 5, output: 25 }, // possible fallback model
-  "claude-fable-5-1": { input: 10, output: 50 },
 };
 
-// Estimated cost of one call. Priced at the model that served it (differs from the one asked for after a fallback).
+// Estimated cost of one call, priced at the model that served it.
 function costOf(model, usage) {
   const price = PRICES[model] ?? PRICES[Object.keys(PRICES).find((m) => model.startsWith(m))];
   const input = usage.input_tokens ?? 0;
@@ -308,9 +302,7 @@ async function grade({ from, to, source, references, attempt, sourceKind, grader
     },
     messages: [{ role: "user", content: prompt }],
   };
-  const response = FALLBACK_MODELS.has(grader.model)
-    ? await client.beta.messages.create({ ...params, betas: ["server-side-fallback-2026-07-01"], fallbacks: "default" })
-    : await client.messages.create(params);
+  const response = await client.messages.create(params);
 
   if (response.stop_reason === "refusal") throw new Error("The model declined to grade this attempt.");
   const text = response.content
@@ -413,9 +405,7 @@ async function buildStudyList({ candidates, grader }) {
     },
     messages: [{ role: "user", content: `${candidates.length} candidates:\n\n${prompt}` }],
   };
-  const response = FALLBACK_MODELS.has(grader.model)
-    ? await client.beta.messages.create({ ...params, betas: ["server-side-fallback-2026-07-01"], fallbacks: "default" })
-    : await client.messages.create(params);
+  const response = await client.messages.create(params);
 
   if (response.stop_reason === "refusal") throw new Error("The model declined to build a list from these mistakes.");
   const text = response.content
@@ -471,6 +461,19 @@ const SECURITY_HEADERS = {
   "X-Content-Type-Options": "nosniff",
   "Referrer-Policy": "strict-origin-when-cross-origin",
 };
+
+// Cloudflare caches .js and .css for hours whatever the origin says, so the page and scripts refer to
+// each asset as name?v=<content hash>: an edited file gets a new URL that no cache has seen yet.
+const VERSIONED = ["app.js", "text.js", "style.css"];
+async function withVersions(text) {
+  for (const name of VERSIONED) {
+    const data = await fs.readFile(path.join(PUBLIC, name)).catch(() => null);
+    if (!data) continue;
+    const v = crypto.createHash("sha256").update(data).digest("hex").slice(0, 10);
+    text = text.replace(new RegExp(`(["'](?:\\./)?)${name.replace(".", "\\.")}(["'])`, "g"), `$1${name}?v=${v}$2`);
+  }
+  return text;
+}
 
 function send(res, status, body, type = "application/json", headers = {}) {
   res.writeHead(status, { ...SECURITY_HEADERS, "Content-Type": `${type}; charset=utf-8`, ...headers });
@@ -569,9 +572,11 @@ const server = http.createServer(async (req, res) => {
       const rel = url.pathname === "/" ? "index.html" : url.pathname.slice(1);
       const file = path.join(PUBLIC, path.normalize(rel));
       if (!file.startsWith(PUBLIC)) return send(res, 403, "Forbidden", "text/plain");
-      const data = await fs.readFile(file).catch(() => null);
+      let data = await fs.readFile(file).catch(() => null);
       if (!data) return send(res, 404, "Not found", "text/plain");
-      return send(res, 200, data, MIME[path.extname(file)] ?? "application/octet-stream");
+      if (/\.(html|js)$/.test(file)) data = await withVersions(data.toString("utf8"));
+      // Revalidate every time: a cached app.js paired with a newer index.html (or the reverse) breaks the page.
+      return send(res, 200, data, MIME[path.extname(file)] ?? "application/octet-stream", { "Cache-Control": "no-cache" });
     }
 
     send(res, 405, { error: "Method not allowed" });
