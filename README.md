@@ -19,7 +19,7 @@ npm run build-corpus                     # optional: needed for passages and for
 ANTHROPIC_API_KEY=sk-ant-... npm start   # http://localhost:5173
 ```
 
-Grader: Claude Sonnet 5 at medium effort by default. Every graded answer has a small picker under the feedback that regrades it with another model or thinking level: Haiku 4.5 or Sonnet 5 (low to high). A regrade replaces that answer's recorded mistakes instead of adding to them. Set the default with environment variables, e.g. `MODEL=claude-haiku-4-5 npm start`.
+Grader: Set the grader via e.g., `MODEL=claude-haiku-4-5 npm start`.
 
 ## Hosting
 

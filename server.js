@@ -13,11 +13,12 @@ const PORT = Number(process.env.PORT) || 5173;
 // Grader models the UI may pick from, with the effort levels offered for each (Haiku 4.5 has no effort setting).
 const GRADERS = {
   "claude-haiku-4-5": [null],
+  "claude-sonnet-5-5": ["low", "medium", "high"],
   "claude-sonnet-5": ["low", "medium", "high"],
 };
 
 function resolveGrader(model, effort) {
-  if (!GRADERS[model]) model = "claude-sonnet-5";
+  if (!GRADERS[model]) model = "claude-sonnet-5-5";
   const efforts = GRADERS[model];
   return { model, effort: efforts.includes(effort) ? effort : efforts.includes("medium") ? "medium" : efforts[0] };
 }
@@ -25,6 +26,7 @@ function resolveGrader(model, effort) {
 // USD per million tokens (Claude API list prices). Thinking tokens are billed as output.
 const PRICES = {
   "claude-haiku-4-5": { input: 1, output: 5 },
+  "claude-sonnet-5-5": { input: 2, output: 10 },
   "claude-sonnet-5": { input: 2, output: 10 },
 };
 
@@ -42,7 +44,7 @@ function costOf(model, usage) {
 }
 
 // Default grader, overridable with MODEL / EFFORT.
-const DEFAULT_GRADER = resolveGrader(process.env.MODEL || "claude-sonnet-5", process.env.EFFORT || "medium");
+const DEFAULT_GRADER = resolveGrader(process.env.MODEL || "claude-sonnet-5-5", process.env.EFFORT || "medium");
 
 const client = new Anthropic();
 
