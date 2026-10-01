@@ -256,6 +256,7 @@ test("graded rounds are unaffected: submit, change mode, then next", async () =>
   const first = shown(app);
   await app.type("an attempt");
   await app.press("Enter");
+  await app.press("f");
   assert.equal(app.grades.length, 1);
   assert.match(app.result(), /Nearly\./);
   assert.deepEqual(app.hintButtons(), ["next"]);
@@ -266,5 +267,41 @@ test("graded rounds are unaffected: submit, change mode, then next", async () =>
 
   await app.press("Enter");
   assert.equal(shown(app).from, "eng");
+  assert.deepEqual(app.hintButtons(), ["skip", "submit"]);
+});
+
+test("a wrong answer shows the diff without grading; F asks for feedback", async () => {
+  const app = await boot();
+  await app.type("an attempt");
+  await app.press("Enter");
+  assert.equal(app.grades.length, 0, "nothing sent until asked");
+  assert.match(app.result(), /reference/);
+  assert.deepEqual(app.hintButtons(), ["feedback", "next"]);
+
+  await app.press("f");
+  assert.equal(app.grades.length, 1);
+  assert.match(app.result(), /Nearly\./);
+  assert.deepEqual(app.hintButtons(), ["next"]);
+  await app.press("f");
+  assert.equal(app.grades.length, 1, "F does nothing once graded");
+});
+
+test("the feedback button grades too", async () => {
+  const app = await boot();
+  await app.type("an attempt");
+  await app.press("Enter");
+  await app.click("[data-feedback]");
+  assert.equal(app.grades.length, 1);
+  assert.equal(app.history().length, 1);
+});
+
+test("Enter on an ungraded answer moves on without grading", async () => {
+  const app = await boot();
+  const first = shown(app);
+  await app.type("an attempt");
+  await app.press("Enter");
+  await app.press("Enter");
+  assert.equal(app.grades.length, 0);
+  assert.notEqual(app.source(), first.text);
   assert.deepEqual(app.hintButtons(), ["skip", "submit"]);
 });

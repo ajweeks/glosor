@@ -467,7 +467,19 @@ async function submit() {
     return;
   }
 
-  await gradeEntry(entry);
+  // Otherwise show the diff, and only ask the grader if the user wants feedback: small slips are clear enough from the diff.
+  entry.status = "ungraded";
+  renderResult(entry);
+  els.hint.innerHTML =
+    `<span class="keys"><kbd>F</kbd> </span><button class="hint-btn" data-feedback>feedback</button> ` +
+    `<button class="hint-btn" data-next>next</button><span class="keys"> <kbd>Enter</kbd></span>`;
+}
+
+function requestFeedback() {
+  const entry = current?.entry;
+  if (entry?.status !== "ungraded") return;
+  els.hint.innerHTML = "";
+  gradeEntry(entry);
 }
 
 async function gradeEntry(entry, grader) {
@@ -559,13 +571,19 @@ els.hint.addEventListener("click", (e) => {
   if (e.target.closest("[data-next]")) nextRound();
   else if (e.target.closest("[data-skip]")) skip();
   else if (e.target.closest("[data-submit]")) submit();
+  else if (e.target.closest("[data-feedback]")) requestFeedback();
 });
 
 document.addEventListener("keydown", (e) => {
   if (gating) return;
   if (location.hash.startsWith("#/history") || location.hash.startsWith("#/mistakes")) return;
   if (e.target === els.answer || e.target.tagName === "SELECT") return;
-  const over = !current || current.revealed || current.entry?.status === "done" || current.entry?.status === "error";
+  const status = current?.entry?.status;
+  if ((e.key === "f" || e.key === "F") && !e.ctrlKey && !e.metaKey && !e.altKey && status === "ungraded") {
+    e.preventDefault();
+    return requestFeedback();
+  }
+  const over = !current || current.revealed || status === "done" || status === "error" || status === "ungraded";
   if ((e.key === "Enter" || (e.key === "Escape" && current?.revealed)) && over) {
     e.preventDefault();
     nextRound();

@@ -442,7 +442,10 @@ function unescapeStrings(value) {
 // ---------------------------------------------------------------------------
 // HTTP
 
-const MIME = { ".html": "text/html", ".js": "text/javascript", ".css": "text/css", ".svg": "image/svg+xml" };
+const MIME = {
+  ".html": "text/html", ".js": "text/javascript", ".css": "text/css", ".svg": "image/svg+xml",
+  ".png": "image/png", ".ico": "image/x-icon", ".webmanifest": "application/manifest+json",
+};
 
 // Scripts only from this origin and Turnstile, no framing; inline styles stay allowed for a few style="" attributes.
 const SECURITY_HEADERS = {
