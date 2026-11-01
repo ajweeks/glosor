@@ -25,6 +25,14 @@ if (( ${#missing[@]} )); then
   exit 1
 fi
 
+pids=()
+cleanup() {
+  trap - EXIT INT TERM
+  kill "${pids[@]}" 2>/dev/null || true
+  wait 2>/dev/null || true
+}
+trap cleanup EXIT INT TERM
+
 [[ -d node_modules ]] || npm install --omit=dev
 [[ -f data/corpus.json ]] || npm run build-corpus
 
@@ -37,8 +45,11 @@ if [[ -n "${TUNNEL_NAME:-}" ]]; then
   # Only trusted here: without a proxy in front, that header is whatever the client sends.
   export TRUST_PROXY=1
   cloudflared tunnel --no-autoupdate run --url "http://localhost:$PORT" "$TUNNEL_NAME" &
-  tunnel=$!
-  trap 'kill $tunnel 2>/dev/null' EXIT
+  pids+=("$!")
 fi
 
-node server.js
+node server.js &
+pids+=("$!")
+
+# Exit as soon as either process dies, and stop the other one.
+wait -n
